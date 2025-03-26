@@ -129,9 +129,9 @@ if ($mform->is_cancelled()) {
     redirect($returnurl);
 }
 
-$PAGE->set_title('Random question');
+$PAGE->set_title('RS provided question');
 $PAGE->set_heading($COURSE->fullname);
-$PAGE->navbar->add('Random question');
+$PAGE->navbar->add('RS provided question');
 
 // Display a heading, question editing form.
 echo $OUTPUT->header();
