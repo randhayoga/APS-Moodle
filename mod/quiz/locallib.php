@@ -162,41 +162,56 @@ function quiz_create_attempt(quiz $quizobj, $attemptnumber, $lastattempt, $timen
 function quiz_start_new_attempt($quizobj, $quba, $attempt, $attemptnumber, $timenow,
                                 $questionids = array(), $forcedvariantsbyslot = array()) {
 
-    // Usages for this user's previous quiz attempts.
+    // Retrieve the question usage IDs for this user's previous quiz attempts.
     $qubaids = new \mod_quiz\question\qubaids_for_users_attempts(
             $quizobj->get_quizid(), $attempt->userid);
 
-    // Fully load all the questions in this quiz.
+    // Preload all the questions in the quiz to optimize performance.
     $quizobj->preload_questions();
+
+    // Load all the questions into memory for processing.
     $quizobj->load_questions();
 
-    // First load all the non-random questions.
-    $randomfound = false;
-    $slot = 0;
-    $questions = array();
-    $maxmark = array();
-    $page = array();
+    // Initialize variables for processing questions.
+    $randomfound = false; // Flag to indicate if random questions are present.
+    $slot = 0; // Slot counter for questions
+    $questions = array(); // Array to store processed questions.
+    $maxmark = array(); // Array to store maximum marks for each question.
+    $page = array(); // Array to store page numbers for each question.
+
+    // Iterate through all questions in the quiz.
     foreach ($quizobj->get_questions() as $questiondata) {
-        $slot += 1;
-        $maxmark[$slot] = $questiondata->maxmark;
-        $page[$slot] = $questiondata->page;
+        $slot += 1; // Increment the slot counter.
+        $maxmark[$slot] = $questiondata->maxmark; // Store the maximum mark for the question.
+        $page[$slot] = $questiondata->page; // Store the page number for the question
+
+        // Check if the question is in draft status and throw an error if it is.
         if ($questiondata->status == \core_question\local\bank\question_version_status::QUESTION_STATUS_DRAFT) {
             throw new moodle_exception('questiondraftonly', 'mod_quiz', '', $questiondata->name);
         }
+
+        // If the question is of type "random", set the flag and skip further processing for now.
         if ($questiondata->qtype == 'random') {
             $randomfound = true;
             continue;
         }
+
+        // If the quiz does not allow shuffling answers, disable shuffling for this question.
         if (!$quizobj->get_quiz()->shuffleanswers) {
             $questiondata->options->shuffleanswers = false;
         }
+
+        // Create a question object and store it in the questions array.
         $questions[$slot] = question_bank::make_question($questiondata);
     }
 
     // Then find a question to go in place of each random question.
+    // If random questions are found, resolve them.
     if ($randomfound) {
-        $slot = 0;
-        $usedquestionids = array();
+        $slot = 0; // Reset the slot counter.
+        $usedquestionids = array(); // Array to track used question IDs.
+
+        // Count the number of times each question ID is used.
         foreach ($questions as $question) {
             if ($question->id && isset($usedquestions[$question->id])) {
                 $usedquestionids[$question->id] += 1;
@@ -204,24 +219,33 @@ function quiz_start_new_attempt($quizobj, $quba, $attempt, $attemptnumber, $time
                 $usedquestionids[$question->id] = 1;
             }
         }
+
+        // Create a random question loader to handle random question selection.
         $randomloader = new \core_question\local\bank\random_question_loader($qubaids, $usedquestionids);
 
+        // Iterate through all questions again to resolve random questions.
         foreach ($quizobj->get_questions() as $questiondata) {
-            $slot += 1;
+            $slot += 1; // Increment the slot counter.
+
+            // Skip non-random questions.
             if ($questiondata->qtype != 'random') {
                 continue;
             }
 
+            // Get the tag IDs associated with the question slot.
             $tagids = qbank_helper::get_tag_ids_for_slot($questiondata);
 
-            // Deal with fixed random choices for testing.
+            // Handle forced random choices for testing purposes.
             if (isset($questionids[$quba->next_slot_number()])) {
                 if ($randomloader->is_question_available($questiondata->category,
                         (bool) $questiondata->questiontext, $questionids[$quba->next_slot_number()], $tagids)) {
+
+                    // Load the forced question and add it to the questions array.
                     $questions[$slot] = question_bank::load_question(
                             $questionids[$quba->next_slot_number()], $quizobj->get_quiz()->shuffleanswers);
                     continue;
                 } else {
+                    // Throw an error if the forced question ID is not available.
                     throw new coding_exception('Forced question id not available.');
                 }
             }
@@ -230,27 +254,34 @@ function quiz_start_new_attempt($quizobj, $quba, $attempt, $attemptnumber, $time
             $questionid = $randomloader->get_next_question_id($questiondata->category,
                     $questiondata->randomrecurse, $tagids);
             if ($questionid === null) {
+                // Throw an error if there are not enough random questions available.
                 throw new moodle_exception('notenoughrandomquestions', 'quiz',
                                            $quizobj->view_url(), $questiondata);
             }
 
+            // Load the selected random question and add it to the questions array.
             $questions[$slot] = question_bank::load_question($questionid,
                     $quizobj->get_quiz()->shuffleanswers);
         }
     }
 
-    // Finally add them all to the usage.
+    // Sort the questions by slot number to ensure correct order.
     ksort($questions);
+
+    // Add all questions to the question usage object.
     foreach ($questions as $slot => $question) {
-        $newslot = $quba->add_question($question, $maxmark[$slot]);
+        $newslot = $quba->add_question($question, $maxmark[$slot]); // Add the question to the usage.
+
         if ($newslot != $slot) {
+            // Throw an error if the slot numbers are inconsistent.
             throw new coding_exception('Slot numbers have got confused.');
         }
     }
 
-    // Start all the questions.
+    // Start all the questions using a variant strategy.
     $variantstrategy = new core_question\engine\variants\least_used_strategy($quba, $qubaids);
 
+    // Handle forced variants for testing purposes.
     if (!empty($forcedvariantsbyslot)) {
         $forcedvariantsbyseed = question_variant_forced_choices_selection_strategy::prepare_forced_choices_array(
             $forcedvariantsbyslot, $quba);
@@ -258,52 +289,60 @@ function quiz_start_new_attempt($quizobj, $quba, $attempt, $attemptnumber, $time
             $forcedvariantsbyseed, $variantstrategy);
     }
 
+    // Start all questions with the selected variant strategy.
     $quba->start_all_questions($variantstrategy, $timenow, $attempt->userid);
 
     // Work out the attempt layout.
-    $sections = $quizobj->get_sections();
+    $sections = $quizobj->get_sections(); // Get the sections of the quiz.
     foreach ($sections as $i => $section) {
         if (isset($sections[$i + 1])) {
+            // Set the last slot for the current section.
             $sections[$i]->lastslot = $sections[$i + 1]->firstslot - 1;
         } else {
+            // Set the last slot for the final section.
             $sections[$i]->lastslot = count($questions);
         }
     }
 
-    $layout = array();
+    $layout = array(); // Initialize the layout array.
     foreach ($sections as $section) {
         if ($section->shufflequestions) {
+            // Shuffle questions within the section if required.
             $questionsinthissection = array();
             for ($slot = $section->firstslot; $slot <= $section->lastslot; $slot += 1) {
                 $questionsinthissection[] = $slot;
             }
-            shuffle($questionsinthissection);
-            $questionsonthispage = 0;
+            shuffle($questionsinthissection); // Shuffle the questions.
+            $questionsonthispage = 0; // Reset the page counter.
             foreach ($questionsinthissection as $slot) {
                 if ($questionsonthispage && $questionsonthispage == $quizobj->get_quiz()->questionsperpage) {
-                    $layout[] = 0;
+                    $layout[] = 0; // Add a page break.
                     $questionsonthispage = 0;
                 }
-                $layout[] = $slot;
+                $layout[] = $slot; // Add the question slot to the layout.
                 $questionsonthispage += 1;
             }
 
         } else {
-            $currentpage = $page[$section->firstslot];
+            // Handle non-shuffled sections.
+            $currentpage = $page[$section->firstslot]; // Get the current page number.
             for ($slot = $section->firstslot; $slot <= $section->lastslot; $slot += 1) {
                 if ($currentpage !== null && $page[$slot] != $currentpage) {
-                    $layout[] = 0;
+                    $layout[] = 0;  // Add a page break if the page changes.
                 }
-                $layout[] = $slot;
-                $currentpage = $page[$slot];
+                $layout[] = $slot; // Add the question slot to the layout.
+                $currentpage = $page[$slot]; // Update the current page number.
             }
         }
 
         // Each section ends with a page break.
         $layout[] = 0;
     }
+
+    // Set the layout for the attempt.
     $attempt->layout = implode(',', $layout);
 
+    // Return the modified attempt object.
     return $attempt;
 }
 
@@ -2514,7 +2553,7 @@ function quiz_update_section_firstslots($quizid, $direction, $afterslot, $before
 }
 
 /**
- * Add a random question to the quiz at a given point.
+ * Add a random question (slot) to the quiz at a given point. Used for the button that says "Add random question"
  * @param stdClass $quiz the quiz settings.
  * @param int $addonpage the page on which to add the question.
  * @param int $categoryid the question category to add the question from.
@@ -2526,45 +2565,62 @@ function quiz_add_random_questions($quiz, $addonpage, $categoryid, $number,
         $includesubcategories, $tagids = []) {
     global $DB;
 
+    // Retrieve the question category record from the database using the provided category ID.
     $category = $DB->get_record('question_categories', ['id' => $categoryid]);
     if (!$category) {
+        // Throw an exception if the category does not exist.
         new moodle_exception('invalidcategoryid');
     }
 
+    // Get the context of the question category.
     $catcontext = context::instance_by_id($category->contextid);
+
+    // Ensure the user has the capability to use questions from this category.
     require_capability('moodle/question:useall', $catcontext);
 
-    // Tags for filter condition.
-    $tags = \core_tag_tag::get_bulk($tagids, 'id, name');
-    $tagstrings = [];
+    // Prepare tags for filtering random questions.
+    $tags = \core_tag_tag::get_bulk($tagids, 'id, name'); // Retrieve tag details for the provided tag IDs.
+    $tagstrings = []; // Initialize an array to store tag strings.
     foreach ($tags as $tag) {
+        // Format each tag as "id,name" and add it to the array.
         $tagstrings[] = "{$tag->id},{$tag->name}";
     }
-    // Create the selected number of random questions.
+
+    // Loop to create the specified number of random questions.
     for ($i = 0; $i < $number; $i++) {
-        // Set the filter conditions.
+        // Set the filter conditions for selecting random questions.
         $filtercondition = new stdClass();
-        $filtercondition->questioncategoryid = $categoryid;
-        $filtercondition->includingsubcategories = $includesubcategories ? 1 : 0;
+        $filtercondition->questioncategoryid = $categoryid; // Set the category ID.
+        $filtercondition->includingsubcategories = $includesubcategories ? 1 : 0; // Include subcategories if specified.
         if (!empty($tagstrings)) {
+            // Add tags to the filter condition if they are provided.
             $filtercondition->tags = $tagstrings;
         }
 
+        // Ensure the quiz object has a valid course module ID (cmid).
         if (!isset($quiz->cmid)) {
+            // Retrieve the course module for the quiz and set its cmid.
             $cm = get_coursemodule_from_instance('quiz', $quiz->id, $quiz->course);
             $quiz->cmid = $cm->id;
         }
 
-        // Slot data.
+        // Prepare data for the random question slot.
         $randomslotdata = new stdClass();
-        $randomslotdata->quizid = $quiz->id;
-        $randomslotdata->usingcontextid = context_module::instance($quiz->cmid)->id;
-        $randomslotdata->questionscontextid = $category->contextid;
-        $randomslotdata->maxmark = 1;
+        $randomslotdata->quizid = $quiz->id; // Set the quiz ID.
+        $randomslotdata->usingcontextid = context_module::instance($quiz->cmid)->id; // Set the context ID of the quiz.
+        $randomslotdata->questionscontextid = $category->contextid; // Set the context ID of the question category.
+        $randomslotdata->maxmark = 1; // Set the default maximum mark for the random question.
 
+        // Create a new random slot object.
         $randomslot = new \mod_quiz\local\structure\slot_random($randomslotdata);
+
+        // Associate the random slot with the quiz.
         $randomslot->set_quiz($quiz);
+
+        // Set the filter condition for the random slot.
         $randomslot->set_filter_condition($filtercondition);
+
+        // Insert the random slot into the quiz at the specified page.
         $randomslot->insert($addonpage);
     }
 }
