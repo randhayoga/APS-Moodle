@@ -291,7 +291,29 @@ class qtype_random extends question_type {
     public function choose_other_question($questiondata, $excludedquestions, $allowshuffle = true, $forcequestionid = null) {
         $available = $this->get_available_questions_from_category($questiondata->category,
                 !empty($questiondata->questiontext));
-        shuffle($available);
+        shuffle($available); // The key to the randomizer
+
+        // // Send dummy data to Flask API for testing
+        // $data = array("input" => array(6)); // Example input: 6
+
+        // $options = array(
+        //     "http" => array(
+        //         "header"  => "Content-Type: application/json",
+        //         "method"  => "POST",
+        //         "content" => json_encode($data)
+        //     )
+        // );
+
+        // $context  = stream_context_create($options);
+        // $result = file_get_contents('http://127.0.0.1:5000/predict', false, $context);
+
+        // if ($result === FALSE) {
+        //     // Handle error
+        //     error_log("Error sending data to Flask API");
+        // } else {
+        //     // Log the result for testing purposes
+        //     error_log("Data sent to Flask API successfully: " . $result);
+        // }
 
         if ($forcequestionid !== null) {
             $forcedquestionkey = array_search($forcequestionid, $available);

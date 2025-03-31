@@ -66,11 +66,19 @@ class random_question_loader {
      *      further existing uses of a question in addition to the ones in $qubaids.
      */
     public function __construct(\qubaid_condition $qubaids, array $usedquestions = []) {
+        // Store the condition object that defines which question usages to consider.
         $this->qubaids = $qubaids;
+
+        // Initialize the recently used questions with the provided array.
+        // This tracks questions that have been used recently but are not yet recorded in the database.
         $this->recentlyusedquestions = $usedquestions;
 
+        // Iterate over all available question types in the question bank.
         foreach (\question_bank::get_all_qtypes() as $qtype) {
+            // Check if the question type is not usable by random questions.
             if (!$qtype->is_usable_by_random()) {
+                // Add the name of the excluded question type to the $excludedqtypes array.
+                // This ensures that these question types are filtered out during random question selection.
                 $this->excludedqtypes[] = $qtype->name();
             }
         }
@@ -91,18 +99,34 @@ class random_question_loader {
      * @return int|null the id of the question picked, or null if there aren't any.
      */
     public function get_next_question_id($categoryid, $includesubcategories, $tagids = []): ?int {
+        // Ensure that questions for the given category, subcategories, and tags are loaded into the cache.
         $this->ensure_questions_for_category_loaded($categoryid, $includesubcategories, $tagids);
 
+        // Generate a unique key for the cache based on the category, subcategories, and tags.
         $categorykey = $this->get_category_key($categoryid, $includesubcategories, $tagids);
+
+        // Check if there are any available questions in the cache for the given category key.
         if (empty($this->availablequestionscache[$categorykey])) {
+            // If no questions are available, return null.
             return null;
         }
 
+        // Reset the internal pointer of the array to the first element.
         reset($this->availablequestionscache[$categorykey]);
+
+        // Get the usage count (key) of the group of questions with the fewest uses.
         $lowestcount = key($this->availablequestionscache[$categorykey]);
+
+        // Reset the internal pointer of the array for the group with the fewest uses.
         reset($this->availablequestionscache[$categorykey][$lowestcount]);
+
+        // Get the ID of the first question in the group with the fewest uses.
         $questionid = key($this->availablequestionscache[$categorykey][$lowestcount]);
+
+        // Mark the selected question as "used" to ensure it is not selected again in the same session.
         $this->use_question($questionid);
+
+        // Return the ID of the selected question.
         return $questionid;
     }
 
@@ -116,16 +140,22 @@ class random_question_loader {
      * @return string the cache key.
      */
     protected function get_category_key($categoryid, $includesubcategories, $tagids = []): string {
+        // Check if subcategories should be included.
         if ($includesubcategories) {
+            // If yes, append '|1' to the category ID to indicate inclusion of subcategories.
             $key = $categoryid . '|1';
         } else {
+            // If no, append '|0' to the category ID to indicate exclusion of subcategories.
             $key = $categoryid . '|0';
         }
 
+        // Check if there are any tag IDs provided.
         if (!empty($tagids)) {
+            // If tags are provided, append them to the key, separated by '|'.
             $key .= '|' . implode('|', $tagids);
         }
 
+        // Return the generated key as a string.
         return $key;
     }
 
@@ -139,51 +169,74 @@ class random_question_loader {
      *      only the questions that are tagged with ALL the provided tagids will be loaded.
      */
     protected function ensure_questions_for_category_loaded($categoryid, $includesubcategories, $tagids = []): void {
-        global $DB;
+        global $DB; // Access the global database object for executing queries.
 
+        // Generate a unique cache key for this combination of category, subcategories, and tags.
         $categorykey = $this->get_category_key($categoryid, $includesubcategories, $tagids);
 
+        // Check if the data for this key is already in the cache.
         if (isset($this->availablequestionscache[$categorykey])) {
             // Data is already in the cache, nothing to do.
             return;
         }
 
-        // Load the available questions from the question bank.
+        // Load the list of category IDs based on whether subcategories are included.
         if ($includesubcategories) {
+            // If subcategories are included, get the list of all category IDs in the hierarchy.
             $categoryids = question_categorylist($categoryid);
         } else {
+            // If subcategories are not included, only use the specified category ID.
             $categoryids = [$categoryid];
         }
 
-        list($extraconditions, $extraparams) = $DB->get_in_or_equal($this->excludedqtypes,
-                SQL_PARAMS_NAMED, 'excludedqtype', false);
+        // Prepare SQL conditions to exclude question types that are not usable by random questions.
+        list($extraconditions, $extraparams) = $DB->get_in_or_equal(
+            $this->excludedqtypes, // List of excluded question types.
+            SQL_PARAMS_NAMED, // Use named parameters for the SQL query.
+            'excludedqtype', // Exclude the specified question types.
+            false);
 
+        // Retrieve questions from the database that match the specified criteria.
         $questionidsandcounts = \question_bank::get_finder()->get_questions_from_categories_and_tags_with_usage_counts(
-                $categoryids, $this->qubaids, 'q.qtype ' . $extraconditions, $extraparams, $tagids);
+                $categoryids, // List of category IDs to search in. 
+                $this->qubaids, // Condition object for filtering based on previous usage.
+                'q.qtype ' . $extraconditions, // SQL condition for excluding question types.
+                $extraparams, // Parameters for the SQL query.
+                $tagids); // List of tag IDs to filter questions by.
+
+        // Check if no questions were found for the given criteria.
         if (!$questionidsandcounts) {
-            // No questions in this category.
+            // If no questions are found, store an empty array in the cache for this key.
             $this->availablequestionscache[$categorykey] = [];
             return;
         }
 
-        // Put all the questions with each value of $prevusecount in separate arrays.
-        $idsbyusecount = [];
+        // Group questions by their usage count.
+        $idsbyusecount = []; // Initialize an empty array to store questions grouped by usage count.
         foreach ($questionidsandcounts as $questionid => $prevusecount) {
+            // Skip questions that are in the recently used questions list.
             if (isset($this->recentlyusedquestions[$questionid])) {
                 // Recently used questions are never returned.
-                continue;
+                continue; // Skip this question (recently used) and move to the next one.
             }
+            // Add the question ID to the group corresponding to its usage count.
             $idsbyusecount[$prevusecount][] = $questionid;
         }
 
-        // Now put that data into our cache. For each count, we need to shuffle
+        // Now put that grouped questions data into our cache. For each count, we need to shuffle
         // questionids, and make those the keys of an array.
-        $this->availablequestionscache[$categorykey] = [];
+        $this->availablequestionscache[$categorykey] = []; // Initialize the cache for this key.
         foreach ($idsbyusecount as $prevusecount => $questionids) {
+            // Shuffle the question IDs to randomize their order.
             shuffle($questionids);
+
+            // Store the shuffled question IDs in the cache, with the usage count as the key.
             $this->availablequestionscache[$categorykey][$prevusecount] = array_combine(
-                    $questionids, array_fill(0, count($questionids), 1));
+                    $questionids, // Keys: Question IDs.
+                    array_fill(0, count($questionids), 1)); // Values: All set to 1.
         }
+
+        // Sort the cache by usage count to ensure questions with the fewest uses are accessed first.
         ksort($this->availablequestionscache[$categorykey]);
     }
 
@@ -194,19 +247,31 @@ class random_question_loader {
      * @param int $questionid the question that is being used.
      */
     protected function use_question($questionid): void {
+        // Check if the question ID is already in the recently used questions list.
         if (isset($this->recentlyusedquestions[$questionid])) {
+            // If it is, increment the usage count for that question.
             $this->recentlyusedquestions[$questionid] += 1;
         } else {
+            // If it is not, add it to the recently used questions list with a usage count of 1.
             $this->recentlyusedquestions[$questionid] = 1;
         }
 
+        // Iterate over all categories in the available questions cache.
         foreach ($this->availablequestionscache as $categorykey => $questionsforcategory) {
+            // Iterate over each usage count group within the current category.
             foreach ($questionsforcategory as $numuses => $questionids) {
+                // Check if the question ID is in the current usage count group.
                 if (!isset($questionids[$questionid])) {
+                    // If the question ID is not in this group, skip to the next group.
                     continue;
                 }
+
+                // Remove the question ID from the current usage count group.
                 unset($this->availablequestionscache[$categorykey][$numuses][$questionid]);
+
+                // Check if the current usage count group is now empty.
                 if (empty($this->availablequestionscache[$categorykey][$numuses])) {
+                    // If the group is empty, remove it from the cache.
                     unset($this->availablequestionscache[$categorykey][$numuses]);
                 }
             }
@@ -224,15 +289,25 @@ class random_question_loader {
      * @return int[] The list of question ids
      */
     protected function get_question_ids($categoryid, $includesubcategories, $tagids = []): array {
+        // Ensure that questions for the given category, subcategories, and tags are loaded into the cache.
         $this->ensure_questions_for_category_loaded($categoryid, $includesubcategories, $tagids);
+
+        // Generate a unique key for the cache based on the category, subcategories, and tags.
         $categorykey = $this->get_category_key($categoryid, $includesubcategories, $tagids);
+
+        // Retrieve the cached values for the given category key.
         $cachedvalues = $this->availablequestionscache[$categorykey];
+
+        // Initialize an empty array to store the question IDs.
         $questionids = [];
 
+        // Iterate over all usage count groups in the cache.
         foreach ($cachedvalues as $usecount => $ids) {
+            // Merge the question IDs from the current group into the result array.
             $questionids = array_merge($questionids, array_keys($ids));
         }
 
+        // Return the list of question IDs.
         return $questionids;
     }
 
@@ -249,16 +324,25 @@ class random_question_loader {
      * @return bool whether the question is available in the requested category.
      */
     public function is_question_available($categoryid, $includesubcategories, $questionid, $tagids = []): bool {
+        // Ensure that questions for the given category, subcategories, and tags are loaded into the cache.
         $this->ensure_questions_for_category_loaded($categoryid, $includesubcategories, $tagids);
+
+        // Generate a unique key for the cache based on the category, subcategories, and tags.
         $categorykey = $this->get_category_key($categoryid, $includesubcategories, $tagids);
 
+        // Iterate over all usage count groups in the cache for the given category key.
         foreach ($this->availablequestionscache[$categorykey] as $questionids) {
+            // Check if the question ID exists in the current usage count group.
             if (isset($questionids[$questionid])) {
+                // If the question is available, mark it as used.
                 $this->use_question($questionid);
+
+                // Return true to indicate that the question is available.
                 return true;
             }
         }
 
+        // If the question is not found in any usage count group, return false.
         return false;
     }
 
@@ -276,17 +360,22 @@ class random_question_loader {
      * @return \stdClass[] The list of question records
      */
     public function get_questions($categoryid, $includesubcategories, $tagids = [], $limit = 100, $offset = 0, $fields = []) {
-        global $DB;
+        global $DB; // Access the global database object for executing queries.
 
+        // Retrieve the list of question IDs that match the given criteria.
         $questionids = $this->get_question_ids($categoryid, $includesubcategories, $tagids);
+
+        // If no question IDs are found, return an empty array.
         if (empty($questionids)) {
             return [];
         }
 
+        // Determine which fields to return for each question.
         if (empty($fields)) {
             // Return all fields.
             $fieldsstring = '*';
         } else {
+            // Convert the array of fields into a comma-separated string.
             $fieldsstring = implode(',', $fields);
         }
 
@@ -295,9 +384,14 @@ class random_question_loader {
         if (!empty($questionids)) {
             $hasquestions = true;
         }
+
+        // If there are question IDs, build and execute the SQL query.
         if ($hasquestions) {
+            // Generate the SQL condition for filtering by question IDs.
             list($condition, $param) = $DB->get_in_or_equal($questionids, SQL_PARAMS_NAMED, 'questionid');
             $condition = 'WHERE q.id ' . $condition;
+
+            // Build the SQL query to retrieve the question records.
             $sql = "SELECT {$fieldsstring}
                       FROM (SELECT q.*, qbe.questioncategoryid as category
                       FROM {question} q
@@ -305,8 +399,10 @@ class random_question_loader {
                       JOIN {question_bank_entries} qbe ON qbe.id = qv.questionbankentryid
                       {$condition}) q ORDER BY q.id";
 
+            // Execute the SQL query and return the results.
             return $DB->get_records_sql($sql, $param, $offset, $limit);
         } else {
+            // If no question IDs are available, return an empty array.
             return [];
         }
     }
