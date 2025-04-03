@@ -211,12 +211,19 @@ function quiz_start_new_attempt($quizobj, $quba, $attempt, $attemptnumber, $time
         $slot = 0; // Reset the slot counter.
         $usedquestionids = array(); // Array to track used question IDs.
 
-        // Count the number of times each question ID is used.
+        // [Not needed for RS] Count the number of times each question ID is used.
+        // foreach ($questions as $question) {
+        //     if ($question->id && isset($usedquestions[$question->id])) {
+        //         $usedquestionids[$question->id] += 1;
+        //     } else {
+        //         $usedquestionids[$question->id] = 1;
+        //     }
+        // }
+
+        // [RS] Make the array simpler by only storing the question ID.
         foreach ($questions as $question) {
-            if ($question->id && isset($usedquestions[$question->id])) {
-                $usedquestionids[$question->id] += 1;
-            } else {
-                $usedquestionids[$question->id] = 1;
+            if ($question->id) {
+                $usedquestionids[] = $question->id;
             }
         }
 

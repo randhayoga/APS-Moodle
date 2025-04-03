@@ -71,7 +71,9 @@ class random_question_loader {
 
         // Initialize the recently used questions with the provided array.
         // This tracks questions that have been used recently but are not yet recorded in the database.
-        $this->recentlyusedquestions = $usedquestions;
+        // [For RS]: recentlyusedquestions = [id, id, id, id]
+        // $this->recentlyusedquestions = $usedquestions; // Idk if previous attempt will mess up the RS
+        $this->recentlyusedquestions = []; // Safer bet to ignore previous attempts
 
         // Iterate over all available question types in the question bank.
         foreach (\question_bank::get_all_qtypes() as $qtype) {
@@ -99,8 +101,8 @@ class random_question_loader {
      * @return int|null the id of the question picked, or null if there aren't any.
      */
     public function get_next_question_id($categoryid, $includesubcategories, $tagids = []): ?int {
-        // Ensure that questions for the given category, subcategories, and tags are loaded into the cache.
-        $this->ensure_questions_for_category_loaded($categoryid, $includesubcategories, $tagids);
+        // [Modify] Ensure that questions for the given category, subcategories, and tags are loaded into the cache.
+        $this->ensure_questions_for_category_loaded($categoryid, $includesubcategories, $tagids); // Modify this for the RS
 
         // Generate a unique key for the cache based on the category, subcategories, and tags.
         $categorykey = $this->get_category_key($categoryid, $includesubcategories, $tagids);
@@ -113,18 +115,38 @@ class random_question_loader {
 
         // Reset the internal pointer of the array to the first element.
         reset($this->availablequestionscache[$categorykey]);
+         
+        // [Legacy] for the randomizer
+        // // Get the usage count (key) of the group of questions with the fewest uses.
+        // $lowestcount = key($this->availablequestionscache[$categorykey]);
+        // // Reset the internal pointer of the array for the group with the fewest uses.
+        // reset($this->availablequestionscache[$categorykey][$lowestcount]);
+        // // Get the ID of the first question in the group with the fewest uses.
+        // $questionid = key($this->availablequestionscache[$categorykey][$lowestcount]);
 
-        // Get the usage count (key) of the group of questions with the fewest uses.
-        $lowestcount = key($this->availablequestionscache[$categorykey]);
-
-        // Reset the internal pointer of the array for the group with the fewest uses.
-        reset($this->availablequestionscache[$categorykey][$lowestcount]);
-
-        // Get the ID of the first question in the group with the fewest uses.
-        $questionid = key($this->availablequestionscache[$categorykey][$lowestcount]);
+        // [Modify] Get the question ID of the pointer
+        $questionid = current($this->availablequestionscache[$categorykey]);
 
         // Mark the selected question as "used" to ensure it is not selected again in the same session.
         $this->use_question($questionid);
+
+    //     // API testing
+    //     $url = "http://127.0.0.1:5000/predict";  // Flask API URL
+    //     $data = array("input" => array(6)); // Example input: 6
+    //     $options = array(
+    //         "http" => array(
+    //             "header"  => "Content-Type: application/json",
+    //             "method"  => "POST",
+    //             "content" => json_encode($data)
+    //         )
+    //     );
+    //     $context  = stream_context_create($options);
+    //     $result = file_get_contents($url, false, $context);
+    //     if ($result === FALSE) {
+    //         die("Error calling API");
+    //     }
+    //     $response = json_decode($result, true);
+    //     error_log("Prediction: " . $response["prediction"][0]);
 
         // Return the ID of the selected question.
         return $questionid;
@@ -196,7 +218,7 @@ class random_question_loader {
             'excludedqtype', // Exclude the specified question types.
             false);
 
-        // Retrieve questions from the database that match the specified criteria.
+        // Retrieve questions and its usage count from the database that match the specified criteria.
         $questionidsandcounts = \question_bank::get_finder()->get_questions_from_categories_and_tags_with_usage_counts(
                 $categoryids, // List of category IDs to search in. 
                 $this->qubaids, // Condition object for filtering based on previous usage.
@@ -211,33 +233,53 @@ class random_question_loader {
             return;
         }
 
-        // Group questions by their usage count.
-        $idsbyusecount = []; // Initialize an empty array to store questions grouped by usage count.
-        foreach ($questionidsandcounts as $questionid => $prevusecount) {
+        // [New for RS] remove usage counts as we do not need them. Transform $questionidsandcounts into just the ids.
+        $questionids = []; // Initialize an empty array to store question IDs.
+        foreach ($questionidsandcounts as $questionid => $prevusecount) { 
+            // Iterate over the question IDs.
+            $questionids[] = $questionid; // Store only the question ID, ignoring the usage count.
+
+            error_log('questionid: ' . $questionid); // Debugging log for question IDs.
+        } 
+
+        // [Not needed for RS] Group questions by their usage count.
+        // $idsbyusecount = []; // Initialize an empty array to store questions grouped by usage count.
+        // foreach ($questionidsandcounts as $questionid => $prevusecount) {
+        //     // Skip questions that are in the recently used questions list.
+        //     if (isset($this->recentlyusedquestions[$questionid])) {
+        //         // Recently used questions are never returned.
+        //         continue; // Skip this question (recently used) and move to the next one.
+        //     }
+        //     // Add the question ID to the group corresponding to its usage count.
+        //     $idsbyusecount[$prevusecount][] = $questionid;
+        // }
+
+        // [Not needed for RS] Now put that grouped questions data into our cache. For each count, we need to shuffle
+        // questionids, and make those the keys of an array.
+        // $this->availablequestionscache[$categorykey] = []; // Initialize the cache for this key.
+        // foreach ($idsbyusecount as $prevusecount => $questionids) {
+        //     // Shuffle the question IDs to randomize their order.
+        //     shuffle($questionids);
+
+        //     // Store the shuffled question IDs in the cache, with the usage count as the key.
+        //     $this->availablequestionscache[$categorykey][$prevusecount] = array_combine(
+        //             $questionids, // Keys: Question IDs.
+        //             array_fill(0, count($questionids), 1)); // Values: All set to 1.
+        // }
+
+        // [Not needed for RS] Sort the cache by usage count to ensure questions with the fewest uses are accessed first.
+        // ksort($this->availablequestionscache[$categorykey]);
+
+        // [New for RS] store valid question IDs in the cache.
+        foreach ($questionids as $questionid) {
             // Skip questions that are in the recently used questions list.
-            if (isset($this->recentlyusedquestions[$questionid])) {
-                // Recently used questions are never returned.
+            if (in_array($questionid, $this->recentlyusedquestions)) {
                 continue; // Skip this question (recently used) and move to the next one.
             }
-            // Add the question ID to the group corresponding to its usage count.
-            $idsbyusecount[$prevusecount][] = $questionid;
-        }
-
-        // Now put that grouped questions data into our cache. For each count, we need to shuffle
-        // questionids, and make those the keys of an array.
-        $this->availablequestionscache[$categorykey] = []; // Initialize the cache for this key.
-        foreach ($idsbyusecount as $prevusecount => $questionids) {
-            // Shuffle the question IDs to randomize their order.
-            shuffle($questionids);
-
-            // Store the shuffled question IDs in the cache, with the usage count as the key.
-            $this->availablequestionscache[$categorykey][$prevusecount] = array_combine(
-                    $questionids, // Keys: Question IDs.
-                    array_fill(0, count($questionids), 1)); // Values: All set to 1.
-        }
-
-        // Sort the cache by usage count to ensure questions with the fewest uses are accessed first.
-        ksort($this->availablequestionscache[$categorykey]);
+            
+            // Store the question IDs in the cache
+            $this->availablequestionscache[$categorykey][] = $questionid;
+        } 
     }
 
     /**
@@ -276,6 +318,16 @@ class random_question_loader {
                 }
             }
         }
+
+        // For the RS, simpler logic
+        // Add the question ID to the recently used questions list.
+        $this->recentlyusedquestions[] = $questionid;
+
+        // Remove the question ID from the available questions cache.
+        $this->availablequestionscache[$categorykey] = array_values(array_filter(
+            $this->availablequestionscache[$categorykey], 
+            fn($id) => $id !== $questionid
+        ));
     }
 
     /**
