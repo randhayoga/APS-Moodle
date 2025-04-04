@@ -128,7 +128,7 @@ class random_question_loader {
         $questionid = current($this->availablequestionscache[$categorykey]);
 
         // Mark the selected question as "used" to ensure it is not selected again in the same session.
-        $this->use_question($questionid);
+        $this->use_question($questionid, $categorykey);
 
     //     // API testing
     //     $url = "http://127.0.0.1:5000/predict";  // Flask API URL
@@ -274,9 +274,12 @@ class random_question_loader {
         foreach ($questionids as $questionid) {
             // Skip questions that are in the recently used questions list.
             if (in_array($questionid, $this->recentlyusedquestions)) {
+                // error_log('Skipped questionid: ' . $questionid); // Debugging log for skipped question IDs.
                 continue; // Skip this question (recently used) and move to the next one.
             }
-            
+           
+            // error_log('Added questionid: ' . $questionid); // Debugging log for added question IDs.
+
             // Store the question IDs in the cache
             $this->availablequestionscache[$categorykey][] = $questionid;
         } 
@@ -287,37 +290,38 @@ class random_question_loader {
      * been used one more time.
      *
      * @param int $questionid the question that is being used.
+     * @param int $categorykey the category key for the question. [Added for RS]
      */
-    protected function use_question($questionid): void {
-        // Check if the question ID is already in the recently used questions list.
-        if (isset($this->recentlyusedquestions[$questionid])) {
-            // If it is, increment the usage count for that question.
-            $this->recentlyusedquestions[$questionid] += 1;
-        } else {
-            // If it is not, add it to the recently used questions list with a usage count of 1.
-            $this->recentlyusedquestions[$questionid] = 1;
-        }
+    protected function use_question($questionid, $categorykey): void {
+        // [Legacy] Check if the question ID is already in the recently used questions list.
+        // if (isset($this->recentlyusedquestions[$questionid])) {
+        //     // If it is, increment the usage count for that question.
+        //     $this->recentlyusedquestions[$questionid] += 1;
+        // } else {
+        //     // If it is not, add it to the recently used questions list with a usage count of 1.
+        //     $this->recentlyusedquestions[$questionid] = 1;
+        // }
 
-        // Iterate over all categories in the available questions cache.
-        foreach ($this->availablequestionscache as $categorykey => $questionsforcategory) {
-            // Iterate over each usage count group within the current category.
-            foreach ($questionsforcategory as $numuses => $questionids) {
-                // Check if the question ID is in the current usage count group.
-                if (!isset($questionids[$questionid])) {
-                    // If the question ID is not in this group, skip to the next group.
-                    continue;
-                }
+        // [Legacy] Iterate over all categories in the available questions cache.
+        // foreach ($this->availablequestionscache as $categorykey => $questionsforcategory) {
+        //     // Iterate over each usage count group within the current category.
+        //     foreach ($questionsforcategory as $numuses => $questionids) {
+        //         // Check if the question ID is in the current usage count group.
+        //         if (!isset($questionids[$questionid])) {
+        //             // If the question ID is not in this group, skip to the next group.
+        //             continue;
+        //         }
 
-                // Remove the question ID from the current usage count group.
-                unset($this->availablequestionscache[$categorykey][$numuses][$questionid]);
+        //         // Remove the question ID from the current usage count group.
+        //         unset($this->availablequestionscache[$categorykey][$numuses][$questionid]);
 
-                // Check if the current usage count group is now empty.
-                if (empty($this->availablequestionscache[$categorykey][$numuses])) {
-                    // If the group is empty, remove it from the cache.
-                    unset($this->availablequestionscache[$categorykey][$numuses]);
-                }
-            }
-        }
+        //         // Check if the current usage count group is now empty.
+        //         if (empty($this->availablequestionscache[$categorykey][$numuses])) {
+        //             // If the group is empty, remove it from the cache.
+        //             unset($this->availablequestionscache[$categorykey][$numuses]);
+        //         }
+        //     }
+        // }
 
         // For the RS, simpler logic
         // Add the question ID to the recently used questions list.
@@ -328,6 +332,9 @@ class random_question_loader {
             $this->availablequestionscache[$categorykey], 
             fn($id) => $id !== $questionid
         ));
+
+        error_log('Recently used questions: ' . implode(', ', $this->recentlyusedquestions)); // Debugging log for recently used questions.
+        error_log('Available questions cache: ' . json_encode($this->availablequestionscache)); // Debugging log for available questions cache.
     }
 
     /**
@@ -387,7 +394,7 @@ class random_question_loader {
             // Check if the question ID exists in the current usage count group.
             if (isset($questionids[$questionid])) {
                 // If the question is available, mark it as used.
-                $this->use_question($questionid);
+                $this->use_question($questionid, $categorykey);
 
                 // Return true to indicate that the question is available.
                 return true;
