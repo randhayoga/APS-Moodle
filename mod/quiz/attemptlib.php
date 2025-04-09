@@ -2226,6 +2226,8 @@ class quiz_attempt {
         $this->attempt->arrquestionids = $this->quba->get_all_question_ids(); // Array of question ids.
 
         // [New for RS] Variables for the Student Model (SM)
+        // Due to the format of the RS quiz:
+        // the first question is either the background form or the rs provided programming question.
         $sm_questionid = $this->attempt->arrquestionids[0];
         $sm_fraction = $this->attempt->sumfractions[0];
         $sm_userid = $this->get_userid();
@@ -2260,7 +2262,8 @@ class quiz_attempt {
             $student_model = $DB->get_record_sql('SELECT * FROM {rs_student_model} ' . $where);
 
             if ($tag_name === 'rs_form') {
-                // If this is the background form, then we need to create a new Student Model / Knowledge Level record.
+                // If this (first question) is the background form, 
+                // then we need to create a new Student Model / Knowledge Level record.
                 // Each student will have a unique KL record for each KC tag.
 
                 // Therefore, we need to get all the (Knowledge Component) tag ids.
