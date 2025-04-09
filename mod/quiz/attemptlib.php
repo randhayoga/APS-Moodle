@@ -2187,42 +2187,167 @@ class quiz_attempt {
      * @param bool $studentisonline is the student currently interacting with Moodle?
      */
     public function process_finish($timestamp, $processsubmitted, $timefinish = null, $studentisonline = false) {
-        global $DB;
+        global $DB; // Access the global database object for database operations.
 
+        // Start a database transaction to ensure atomicity of the operations.
         $transaction = $DB->start_delegated_transaction();
 
+        // If processsubmitted is true, process all submitted actions for the quiz attempt.
         if ($processsubmitted) {
-            $this->quba->process_all_actions($timestamp);
+            $this->quba->process_all_actions($timestamp); // Process all question actions submitted by the user
         }
+
+        // Mark all questions in the quiz attempt as finished.
         $this->quba->finish_all_questions($timestamp);
 
+        // Save the state of all questions in the question usage by activity (QUBA).
         question_engine::save_questions_usage_by_activity($this->quba);
 
+        // Update the attempt's last modified time.
         $this->attempt->timemodified = $timestamp;
+
+        // Set the finish time for the attempt. Use $timefinish if provided; otherwise, use $timestamp.
         $this->attempt->timefinish = $timefinish ?? $timestamp;
+
+        // Calculate and store the total grade for the attempt.
         $this->attempt->sumgrades = $this->quba->get_total_mark();
+
+        // Set the state of the attempt to "finished."
         $this->attempt->state = self::FINISHED;
+
+        // Clear the timecheckstate field, as it is no longer needed after the attempt is finished.
         $this->attempt->timecheckstate = null;
+
+        // Clear the graded notification sent time, as it will be updated later if necessary.
         $this->attempt->gradednotificationsenttime = null;
 
+        // [New for RS] Store the fraction and id of each question in the attempt.
+        $this->attempt->sumfractions = $this->quba->get_total_fraction(); // Array of fractions.
+        $this->attempt->arrquestionids = $this->quba->get_all_question_ids(); // Array of question ids.
+
+        // [New for RS] Variables for the Student Model (SM)
+        $sm_questionid = $this->attempt->arrquestionids[0];
+        $sm_fraction = $this->attempt->sumfractions[0];
+        $sm_userid = $this->get_userid();
+
+        // [New for RS] Get tagids from mdl_tag_instance where itemid == questionid.
+        $sm_arr_of_taginstances = $DB->get_records('tag_instance', ['itemid' => $sm_questionid], 'id', 'tagid');
+        $sm_tagid = null;
+        $is_kc = false;
+        $tag_name = null;
+
+        // [New for RS] Loop over the tagids to get the Knowledge Component (KC) tagid
+        foreach ($sm_arr_of_taginstances as $sm_taginstance) {
+            // Get tag name from mdl_tag where id == tagid.
+            $tag_name = ($DB->get_record('tag', ['id' => $sm_taginstance->tagid], 'name'))->name;
+
+            if (!preg_match('/^rs_/', $tag_name)) {
+                continue; // Skip if the tag name does not start with 'rs_' (not KC).
+            }
+
+            // But, if the tag name starts with 'rs_', then it is a KC tag.
+            $is_kc = true;
+            $sm_tagid = $sm_taginstance->tagid;
+            break;
+        }
+
+        // [New for RS]
+        // Student Model (KL / Knowledge Level) manipulation only for RS questions.
+        // If not, then skip for better performance.
+        if ($is_kc === true) {
+            $where = 'WHERE userid=' . $sm_userid . ' AND tagid=' . $sm_tagid;
+
+            $student_model = $DB->get_record_sql('SELECT * FROM {rs_student_model} ' . $where);
+
+            if ($tag_name === 'rs_form') {
+                // If this is the background form, then we need to create a new Student Model / Knowledge Level record.
+                // Each student will have a unique KL record for each KC tag.
+
+                // Therefore, we need to get all the (Knowledge Component) tag ids.
+                $sm_arr_of_tagids = $DB->get_records('tag', null, '', 'id, name');
+                $sm_arr_of_tagids = array_filter($sm_arr_of_tagids, function($tag) {
+                    // Every KC tag starts with 'rs_'.
+                    // But, we need to skip the rs_form and rs_feedback tags (as they are not Knowledge Component).
+                    return preg_match('/^rs_/', $tag->name) && (($tag->name !== 'rs_form') && ($tag->name !== 'rs_feedback'));
+                });
+
+                // [to edit] KL category and score based on Alpro's score.
+                if ($sm_fraction == 1.0) {
+                    // For index score of A
+                    $sm_klcategory = 'wu';
+                    $sm_klscore = 0;
+                } else if ($sm_fraction == 0.8) {
+                    // For index score of AB
+                    $sm_klcategory = 'mu';
+                    $sm_klscore = 50;
+                } else if ($sm_fraction == 0.7) {
+                    // For index score of B
+                    $sm_klcategory = 'mu';
+                    $sm_klscore = 0;
+                } else if ($sm_fraction == 0.6) {
+                    // For index score of BC
+                    $sm_klcategory = 'nu';
+                    $sm_klscore = 75;
+                } else if ($sm_fraction == 0.5) {
+                    // For index score of C
+                    $sm_klcategory = 'nu';
+                    $sm_klscore = 50;
+                } else if ($sm_fraction == 0.4) {
+                    // For index score of D
+                    $sm_klcategory = 'nu';
+                    $sm_klscore = 25;
+                } else {
+                    // For index score of E
+                    $sm_klcategory = 'nu';
+                    $sm_klscore = 0;
+                }
+
+                // Loop to create and then insert KL record for each KC tag.
+                foreach ($sm_arr_of_tagids as $sm_tagid) {
+                    $sm_tagid = $sm_tagid->id;
+                    $record = (object) array(
+                        'userid' => $sm_userid,
+                        'tagid' => $sm_tagid,
+                        'klcategory' => $sm_klcategory,
+                        'klscore' => $sm_klscore,
+                    );
+
+                    // Insert the record into the rs_student_model table.
+                    $DB->insert_record('rs_student_model', $record);
+                }
+            }
+
+            // SM natural updation logic.
+
+
+            // SM force updation logic.
+        }
+        
+        // Check if manual grading is required or if the user has the capability to receive graded notifications.
         if (!$this->requires_manual_grading() ||
                 !has_capability('mod/quiz:emailnotifyattemptgraded', $this->get_quizobj()->get_context(),
                         $this->get_userid())) {
+
+            // If no manual grading is required or the user cannot receive notifications, set the graded notification sent time.
             $this->attempt->gradednotificationsenttime = $this->attempt->timefinish;
         }
 
+        // If no manual grading is required or the user cannot receive notifications, set the graded notification sent time.
         $DB->update_record('quiz_attempts', $this->attempt);
 
+        // If this is not a preview attempt, perform additional actions.
         if (!$this->is_preview()) {
+            // Save the best grade for the user in the quiz.
             quiz_save_best_grade($this->get_quiz(), $this->attempt->userid);
 
-            // Trigger event.
+            // Trigger an event to indicate that the attempt has been submitted.
             $this->fire_state_transition_event('\mod_quiz\event\attempt_submitted', $timestamp, $studentisonline);
 
-            // Tell any access rules that care that the attempt is over.
+            // Notify any access rules that the current attempt has been finished.
             $this->get_access_manager($timestamp)->current_attempt_finished();
         }
 
+        // Commit the transaction to save all changes to the database.
         $transaction->allow_commit();
     }
 

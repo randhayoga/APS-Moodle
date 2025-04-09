@@ -370,7 +370,42 @@ class question_usage_by_activity {
             }
             $mark += $qa->get_mark();
         }
+
         return $mark;
+    }
+
+    /**
+     * [New for RS]
+     * Get the fraction for each question in this usage.
+     * @return array|null The fractions of all the question_attempts in this usage.
+     */
+    public function get_total_fraction() {
+        $fraction = array();
+
+        foreach ($this->questionattempts as $qa) {
+            if ($qa->get_max_mark() > 0 && $qa->get_state() == question_state::$needsgrading) {
+                return null;
+            }
+
+            $fraction[] = $qa->get_fraction();
+        }
+
+        return $fraction;
+    }
+
+    /**
+     * [New for RS]
+     * Get the question ids for each question in this usage.
+     * @return array|null The question ids of all the question_attempts in this usage.
+     */
+    public function get_all_question_ids() {
+        $questionids = array();
+
+        foreach ($this->questionattempts as $qa) {
+            $questionids[] = $qa->get_question_id();
+        }
+
+        return $questionids;
     }
 
     /**

@@ -238,8 +238,6 @@ class random_question_loader {
         foreach ($questionidsandcounts as $questionid => $prevusecount) { 
             // Iterate over the question IDs.
             $questionids[] = $questionid; // Store only the question ID, ignoring the usage count.
-
-            error_log('questionid: ' . $questionid); // Debugging log for question IDs.
         } 
 
         // [Not needed for RS] Group questions by their usage count.
@@ -334,7 +332,7 @@ class random_question_loader {
         ));
 
         error_log('Recently used questions: ' . implode(', ', $this->recentlyusedquestions)); // Debugging log for recently used questions.
-        error_log('Available questions cache: ' . json_encode($this->availablequestionscache)); // Debugging log for available questions cache.
+        // error_log('Available questions cache: ' . json_encode($this->availablequestionscache)); // Debugging log for available questions cache.
     }
 
     /**
