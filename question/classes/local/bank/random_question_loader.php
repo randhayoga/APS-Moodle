@@ -130,23 +130,23 @@ class random_question_loader {
         // Mark the selected question as "used" to ensure it is not selected again in the same session.
         $this->use_question($questionid, $categorykey);
 
-    //     // API testing
-    //     $url = "http://127.0.0.1:5000/predict";  // Flask API URL
-    //     $data = array("input" => array(6)); // Example input: 6
-    //     $options = array(
-    //         "http" => array(
-    //             "header"  => "Content-Type: application/json",
-    //             "method"  => "POST",
-    //             "content" => json_encode($data)
-    //         )
-    //     );
-    //     $context  = stream_context_create($options);
-    //     $result = file_get_contents($url, false, $context);
-    //     if ($result === FALSE) {
-    //         die("Error calling API");
-    //     }
-    //     $response = json_decode($result, true);
-    //     error_log("Prediction: " . $response["prediction"][0]);
+        // API testing
+        // $url = "http://127.0.0.1:5000/predict";  // Flask API URL
+        // $data = array("input" => array(6)); // Example input: 6
+        // $options = array(
+        //     "http" => array(
+        //         "header"  => "Content-Type: application/json",
+        //         "method"  => "POST",
+        //         "content" => json_encode($data)
+        //     )
+        // );
+        // $context  = stream_context_create($options);
+        // $result = file_get_contents($url, false, $context);
+        // if ($result === FALSE) {
+        //     die("Error calling API");
+        // }
+        // $response = json_decode($result, true);
+        // error_log("Prediction: " . $response["prediction"][0]);
 
         // Return the ID of the selected question.
         return $questionid;
@@ -331,7 +331,7 @@ class random_question_loader {
             fn($id) => $id !== $questionid
         ));
 
-        error_log('Recently used questions: ' . implode(', ', $this->recentlyusedquestions)); // Debugging log for recently used questions.
+        // error_log('Recently used questions: ' . implode(', ', $this->recentlyusedquestions)); // Debugging log for recently used questions.
         // error_log('Available questions cache: ' . json_encode($this->availablequestionscache)); // Debugging log for available questions cache.
     }
 
