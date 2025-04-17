@@ -331,6 +331,7 @@ class random_question_loader {
             fn($id) => $id !== $questionid
         ));
 
+        // error_log('Used questionid: ' . $questionid);
         // error_log('Recently used questions: ' . implode(', ', $this->recentlyusedquestions)); // Debugging log for recently used questions.
         // error_log('Available questions cache: ' . json_encode($this->availablequestionscache)); // Debugging log for available questions cache.
     }

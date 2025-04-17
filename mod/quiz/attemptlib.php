@@ -2403,6 +2403,8 @@ class quiz_attempt {
                 $DB->update_record('rs_student_model', $record);
             }
         }
+
+        // error_log("Next Attempt");
         
         // Check if manual grading is required or if the user has the capability to receive graded notifications.
         if (!$this->requires_manual_grading() ||
