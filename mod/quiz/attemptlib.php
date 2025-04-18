@@ -2221,190 +2221,330 @@ class quiz_attempt {
         // Clear the graded notification sent time, as it will be updated later if necessary.
         $this->attempt->gradednotificationsenttime = null;
 
-        // [New for RS] Store the fraction and id of each question in the attempt.
+        // ==================== [New for RS] ====================
+        // Store the fraction and id of each question in the attempt.
         $this->attempt->sumfractions = $this->quba->get_total_fraction(); // Array of fractions.
         $this->attempt->arrquestionids = $this->quba->get_all_question_ids(); // Array of question ids.
 
-        // [New for RS] Variables for the Student Model (SM)
-        // Due to the format of the RS quiz:
-        // the first question is either the background form or the rs provided programming question.
-        $first_questionid = $this->attempt->arrquestionids[0];
-        $first_fraction = $this->attempt->sumfractions[0];
-        $sm_userid = $this->get_userid();
+        $sm_userid = $this->get_userid(); // User ID of the student that is taking the quiz.
+        $arr_of_rsquestions = []; // To store information about Recommender System questions.
 
-        // [New for RS] Get tagids from mdl_tag_instance where itemid == first_questionid.
-        $sm_arr_of_taginstances = $DB->get_records('tag_instance', ['itemid' => $first_questionid], 'id', 'tagid');
-        $sm_tagid = null;
-        $is_kc = false;
-        $tag_name = null;
+        // Loop through each question id in the attempt.
+        // The goal here is to save information about Recommender System questions for later use.
+        for ($i = 0; $i < count($this->attempt->arrquestionids); $i++) {
+            $questionid = $this->attempt->arrquestionids[$i];
+            $fraction = $this->attempt->sumfractions[$i];
 
-        // [New for RS] Loop over the tagids to get the Knowledge Component (KC) tagid
-        foreach ($sm_arr_of_taginstances as $sm_taginstance) {
-            // Get tag name from mdl_tag where id == tagid.
-            $tag_name = ($DB->get_record('tag', ['id' => $sm_taginstance->tagid], 'name'))->name;
+            // Get all tag ids associated with the question id.
+            $arr_of_taginstances = $DB->get_records('tag_instance', ['itemid' => $questionid], 'id', 'tagid');
+            foreach ($arr_of_taginstances as $taginstance) {
+                // Get the name of each tag.
+                $tag_name = ($DB->get_record('tag', ['id' => $taginstance->tagid], 'name'))->name;
+                if (!preg_match('/^rs_/', $tag_name)) {
+                    continue; // Skip if the tag name does not start with 'rs_' (not KC).
+                }
 
-            if (!preg_match('/^rs_/', $tag_name)) {
-                continue; // Skip if the tag name does not start with 'rs_' (not KC).
+                // Else, the tag name starts with 'rs_'.
+                $tagid = $taginstance->tagid;   // Get the tag id.
+
+                // Save the tag id, name, and fraction in an array with the questionid as key.
+                $arr_of_rsquestions[$questionid] = [
+                    'tagid' => $tagid,
+                    'tag_name' => $tag_name,
+                    'fraction' => $fraction,
+                ];
             }
-
-            // But, if the tag name starts with 'rs_', then it is a KC tag.
-            $is_kc = true;
-            $sm_tagid = $sm_taginstance->tagid;
-            break;
         }
 
-        // [New for RS]
-        // Student Model (KL / Knowledge Level) manipulation only for RS questions.
-        // If not, then skip for better performance.
-        if ($is_kc === true) {
-            $where = 'WHERE userid=' . $sm_userid . ' AND tagid=' . $sm_tagid;
+        error_log('RS questions: ' . json_encode($arr_of_rsquestions)); // Log the RS questions for debugging.
 
-            $student_model = $DB->get_record_sql('SELECT * FROM {rs_student_model} ' . $where);
+        // Do Student Model (KL) manipulation only if there is RS questions in this attempt, if not then skip
+        if (count($arr_of_rsquestions) > 0) {
+            // Loop through each RS question to do the relevant Student Model (KL) manipulation.
+            foreach ($arr_of_rsquestions as $questionid => $rsquestion) {
+                // Retrieve the student model for the current question with the matching tag id and user id.
+                // $where = 'WHERE userid=' . $sm_userid . ' AND tagid=' . $rsquestion['tagid'];
+                // $student_model = $DB->get_record_sql('SELECT * FROM {rs_student_model} ' . $where);
 
-            if ($tag_name === 'rs_background') {
-                // If this (first question) is the background form, 
-                // then we need to create a new Student Model / Knowledge Level record.
-                // Each student will have a unique KL record for each KC tag.
+                if ($rsquestion['tag_name'] === 'rs_background') {
+                    // This means the current question is the background form.
+                    // Therefore, we need to create a new Student Model / Knowledge Level record.
 
-                // Therefore, we need to get all the (Knowledge Component) tag ids.
-                $sm_arr_of_tagids = $DB->get_records('tag', null, '', 'id, name');
-                $sm_arr_of_tagids = array_filter($sm_arr_of_tagids, function($tag) {
-                    // Every KC tag starts with 'rs_'.
-                    // But, we need to skip the rs_background and rs_feedback tags (as they are not Knowledge Component).
-                    return preg_match('/^rs_/', $tag->name) && (($tag->name !== 'rs_background') && ($tag->name !== 'rs_feedback'));
-                });
+                    // But first we need to check if the student model already exists for this user.
+                    $sm_query = $DB->get_record('rs_student_model', ['userid' => $sm_userid], 'id');
+                    if ($sm_query != null) {
+                        // If there already is a KL record for this user, then we don't need to create a new one.
+                        // in other words, this code won't create duplicate KL records for the same student and KC tag.
+                        continue;
+                    } else {
+                        // To create a new SM, we need to get all the (Knowledge Component) tag ids.
+                        $arr_of_tagids = $DB->get_records('tag', null, '', 'id, name');
+                        $arr_of_tagids = array_filter($arr_of_tagids, function($tag) {
+                            // Every KC tag starts with 'rs_'.
+                            // But, we need to skip the rs_background and rs_feedback tags (as they are not Knowledge Component).
+                            return preg_match('/^rs_/', $tag->name) && (($tag->name !== 'rs_background') && ($tag->name !== 'rs_feedback'));
+                        });
 
-                // [to edit] KL category and score based on Alpro's score.
-                if ($first_fraction == 1.0) {
-                    // For index score of A
-                    $sm_klcategory = 'wu';
-                    $sm_klscore = 0;
-                } else if ($first_fraction == 0.8) {
-                    // For index score of AB
-                    $sm_klcategory = 'mu';
-                    $sm_klscore = 50;
-                } else if ($first_fraction == 0.7) {
-                    // For index score of B
-                    $sm_klcategory = 'mu';
-                    $sm_klscore = 0;
-                } else if ($first_fraction == 0.6) {
-                    // For index score of BC
-                    $sm_klcategory = 'nu';
-                    $sm_klscore = 75;
-                } else if ($first_fraction == 0.5) {
-                    // For index score of C
-                    $sm_klcategory = 'nu';
-                    $sm_klscore = 50;
-                } else if ($first_fraction == 0.4) {
-                    // For index score of D
-                    $sm_klcategory = 'nu';
-                    $sm_klscore = 25;
+                        // [To edit: Pedagogical Logic]
+                        // Next, based on the student's index score for the prerequisite course, 
+                        // set a pair of appropriate category and score as intial score that this user have for every KC.
+                        if ($rsquestion['fraction'] == 1.0) {
+                            // For index score of A
+                            $sm_klcategory = 'wu';
+                            $sm_klscore = 0;
+                        } else if ($rsquestion['fraction'] == 0.8) {
+                            // For index score of AB
+                            $sm_klcategory = 'mu';
+                            $sm_klscore = 50;
+                        } else if ($rsquestion['fraction'] == 0.7) {
+                            // For index score of B
+                            $sm_klcategory = 'mu';
+                            $sm_klscore = 0;
+                        } else if ($rsquestion['fraction'] == 0.6) {
+                            // For index score of BC
+                            $sm_klcategory = 'nu';
+                            $sm_klscore = 75;
+                        } else if ($rsquestion['fraction'] == 0.5) {
+                            // For index score of C
+                            $sm_klcategory = 'nu';
+                            $sm_klscore = 50;
+                        } else if ($rsquestion['fraction'] == 0.4) {
+                            // For index score of D
+                            $sm_klcategory = 'nu';
+                            $sm_klscore = 25;
+                        } else {
+                            // For index score of E
+                            $sm_klcategory = 'nu';
+                            $sm_klscore = 0;
+                        }
+                        
+                        // Finally, loop to create and then insert KL record for each KC tag.
+                        foreach ($arr_of_tagids as $tagid) {
+                            $record = (object) array(
+                                'userid' => $sm_userid,
+                                'tagid' => $tagid->id,
+                                'klcategory' => $sm_klcategory,
+                                'klscore' => $sm_klscore,
+                            );
+
+                            // Insert the record into the rs_student_model table.
+                            $DB->insert_record('rs_student_model', $record);
+                        }
+                    } 
+                } elseif ($rsquestion['tag_name'] === 'rs_feedback') {
+                    /** 
+                     * This means the current question is the feedback form.
+                     * Therefore, if needed,
+                     * we need to update the KL record for the previous questions that the student has answered.
+                     * By if needed, it means that the user needs to answer the feedback that:
+                     * the questions are either too hard (current fraction=0.5) or too easy (current fraction=1.0).
+                     */
+
+                    // Get all the tag ids associated with all of the questions that the student has answered in this quiz.
+                    // Exclude the rs_background and rs_feedback tags.
+                    $filtered_rsquestions = array_filter($arr_of_rsquestions, function($rsquestion) {
+                        return $rsquestion['tag_name'] !== 'rs_background' && $rsquestion['tag_name'] !== 'rs_feedback';
+                    });
+                    // Get the tag ids of the filtered questions.
+                    $arr_of_kc = array_map(function($rsquestion) {
+                        return [
+                            'tagid' => $rsquestion['tagid'],
+                            'fraction' => $rsquestion['fraction'],
+                        ];
+                    }, $filtered_rsquestions);
+
+                    // Loop through each tag id and update the KL record for the student.
+                    foreach ($arr_of_kc as $kc) {
+                        // Template for updating the KL record:
+                        // $DB->set_field('rs_student_model', 'klcategory', 'wu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
+                        $current_klrecord = $DB->get_record('rs_student_model', ['userid' => $sm_userid, 'tagid' => $kc['tagid']], 'klcategory, klscore');
+
+                        // [To edit:] Pedagogical Logic
+                        // Here, rsquestion['fraction'] is the answer of the feedback form, where 1.0 is too easy and 0.5 is too hard.
+                        // $kc['fraction'] is the fraction of the programming question that the student has answered.
+                        if (($rsquestion['fraction'] == 0.5) && ($kc['fraction'] <= 0.5)) {
+                            // The student thinks that the question is too hard
+                            // Their feedback is valid only if:
+                            // they have answered the question with only two or less correct test case.
+                            if ($current_klrecord->klcategory == 'wu') {
+                                // Downgrade the KL category from 'well understood' to 'moderately understood'.
+                                $DB->set_field('rs_student_model', 'klcategory', 'mu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
+                            } elseif ($current_klrecord->klcategory == 'mu') {
+                                // Downgrade the KL category from 'moderately understood' to 'not understood'.
+                                $DB->set_field('rs_student_model', 'klcategory', 'nu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
+                            }
+                            // Not possible to upgrade the KL category if it is already 'not understood'.
+                        } elseif (($rsquestion['fraction'] == 1.0) && ($kc['fraction'] == 1.0)) {
+                            // The student thinks that the question is too easy
+                            // Their feedback is valid only if they have answered the question correctly.
+                            if ($current_klrecord->klcategory == 'nu') {
+                                // Upgrade the KL category from 'not understood' to 'moderately understood'.
+                                $DB->set_field('rs_student_model', 'klcategory', 'mu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
+                            } elseif ($current_klrecord->klcategory == 'mu') {
+                                // Upgrade the KL category from 'moderately understood' to 'well understood'.
+                                $DB->set_field('rs_student_model', 'klcategory', 'wu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
+                            }
+                            // Not possible to upgrade the KL category if it is already 'well understood'.
+                        }
+                    }
                 } else {
-                    // For index score of E
-                    $sm_klcategory = 'nu';
-                    $sm_klscore = 0;
+                    // This means the current question is an RS programming question.
                 }
+            }
+        }
+
+        // // [New for RS]
+        // // Student Model (KL / Knowledge Level) manipulation only for RS questions.
+        // // If not, then skip for better performance.
+        // if ($is_kc === true) {
+        //     $where = 'WHERE userid=' . $sm_userid . ' AND tagid=' . $sm_tagid;
+
+        //     $student_model = $DB->get_record_sql('SELECT * FROM {rs_student_model} ' . $where);
+
+        //     if ($tag_name === 'rs_background') {
+        //         // If this (first question) is the background form, 
+        //         // then we need to create a new Student Model / Knowledge Level record.
+        //         // Each student will have a unique KL record for each KC tag.
+
+        //         // Therefore, we need to get all the (Knowledge Component) tag ids.
+        //         $sm_arr_of_tagids = $DB->get_records('tag', null, '', 'id, name');
+        //         $sm_arr_of_tagids = array_filter($sm_arr_of_tagids, function($tag) {
+        //             // Every KC tag starts with 'rs_'.
+        //             // But, we need to skip the rs_background and rs_feedback tags (as they are not Knowledge Component).
+        //             return preg_match('/^rs_/', $tag->name) && (($tag->name !== 'rs_background') && ($tag->name !== 'rs_feedback'));
+        //         });
+
+        //         // [to edit] KL category and score based on Alpro's score.
+        //         if ($first_fraction == 1.0) {
+        //             // For index score of A
+        //             $sm_klcategory = 'wu';
+        //             $sm_klscore = 0;
+        //         } else if ($first_fraction == 0.8) {
+        //             // For index score of AB
+        //             $sm_klcategory = 'mu';
+        //             $sm_klscore = 50;
+        //         } else if ($first_fraction == 0.7) {
+        //             // For index score of B
+        //             $sm_klcategory = 'mu';
+        //             $sm_klscore = 0;
+        //         } else if ($first_fraction == 0.6) {
+        //             // For index score of BC
+        //             $sm_klcategory = 'nu';
+        //             $sm_klscore = 75;
+        //         } else if ($first_fraction == 0.5) {
+        //             // For index score of C
+        //             $sm_klcategory = 'nu';
+        //             $sm_klscore = 50;
+        //         } else if ($first_fraction == 0.4) {
+        //             // For index score of D
+        //             $sm_klcategory = 'nu';
+        //             $sm_klscore = 25;
+        //         } else {
+        //             // For index score of E
+        //             $sm_klcategory = 'nu';
+        //             $sm_klscore = 0;
+        //         }
                 
-                // Loop to create and then insert KL record for each KC tag.
-                foreach ($sm_arr_of_tagids as $sm_tagid) {
-                    $sm_tagid = $sm_tagid->id;
-                    $record = (object) array(
-                        'userid' => $sm_userid,
-                        'tagid' => $sm_tagid,
-                        'klcategory' => $sm_klcategory,
-                        'klscore' => $sm_klscore,
-                    );
+        //         // Loop to create and then insert KL record for each KC tag.
+        //         foreach ($sm_arr_of_tagids as $sm_tagid) {
+        //             $sm_tagid = $sm_tagid->id;
+        //             $record = (object) array(
+        //                 'userid' => $sm_userid,
+        //                 'tagid' => $sm_tagid,
+        //                 'klcategory' => $sm_klcategory,
+        //                 'klscore' => $sm_klscore,
+        //             );
 
-                    // Insert the record into the rs_student_model table.
-                    $DB->insert_record('rs_student_model', $record);
-                }
-            } else {
-                // This means the first question is not the background form but the rs provided programming question.
+        //             // Insert the record into the rs_student_model table.
+        //             $DB->insert_record('rs_student_model', $record);
+        //         }
+        //     } else {
+        //         // This means the first question is not the background form but the rs provided programming question.
 
-                // For the first question, we need to "naturally" update the KL record for this KC tagid based on the score.
-                // Get the current KL record that the student (userid) has for the KC (tagid).
-                $record = $DB->get_record('rs_student_model', ['userid' => $sm_userid, 'tagid' => $sm_tagid], 'id, klcategory, klscore');
-                $new_klcategory = $record->klcategory; // For comparison later, we need to store the new KL category.
+        //         // For the first question, we need to "naturally" update the KL record for this KC tagid based on the score.
+        //         // Get the current KL record that the student (userid) has for the KC (tagid).
+        //         $record = $DB->get_record('rs_student_model', ['userid' => $sm_userid, 'tagid' => $sm_tagid], 'id, klcategory, klscore');
+        //         $new_klcategory = $record->klcategory; // For comparison later, we need to store the new KL category.
 
-                // [to edit] Update the KL score based on the score that he/she got for the question.
-                // Current system:
-                // Every question have 4 test cases, each test case will have 0.25 mark, klscore will be updated as follows:
-                if ($first_fraction == 0) {
-                    // None of the test cases passed (-25).
-                    $record->klscore = $record->klscore - 25;
-                } else if ($first_fraction == 0.25) {
-                    // Only one test case passed (-12).
-                    $record->klscore = $record->klscore - 12;
-                } else if ($first_fraction == 0.75) {
-                    // Note: for two passed test cases (fraction = 0.5), do nothing.
-                    // Three test cases passed (+12).
-                    $record->klscore = $record->klscore + 12;
-                } else if ($first_fraction == 1.0) {
-                    // All test cases passed (+25).
-                    $record->klscore = $record->klscore + 25;
-                }
+        //         // [to edit] Update the KL score based on the score that he/she got for the question.
+        //         // Current system:
+        //         // Every question have 4 test cases, each test case will have 0.25 mark, klscore will be updated as follows:
+        //         if ($first_fraction == 0) {
+        //             // None of the test cases passed (-25).
+        //             $record->klscore = $record->klscore - 25;
+        //         } else if ($first_fraction == 0.25) {
+        //             // Only one test case passed (-12).
+        //             $record->klscore = $record->klscore - 12;
+        //         } else if ($first_fraction == 0.75) {
+        //             // Note: for two passed test cases (fraction = 0.5), do nothing.
+        //             // Three test cases passed (+12).
+        //             $record->klscore = $record->klscore + 12;
+        //         } else if ($first_fraction == 1.0) {
+        //             // All test cases passed (+25).
+        //             $record->klscore = $record->klscore + 25;
+        //         }
 
-                // The range of the KL score is 0 to 100, if it went above 100 or below 0, then:
-                // we need to adjust the KL category and KL score.
-                if ($record->klscore > 100) {
-                    // If it went above 100, then:
-                    if ($record->klcategory == 'wu') {
-                        $record->klscore = 100; // Set it at 100 (max) if the KL category is already the best.
-                    } else if ($record->klcategory == 'mu') {
-                        $new_klcategory = 'wu'; // Upgrade the category to one level above it.
-                        $record->klscore = $record->klscore - 100; // Subtract 100 from the KL score.
-                    } else { // if ($record->klcategory == 'nu')
-                        $new_klcategory = 'mu'; // Upgrade the category to one level above it.
-                        $record->klscore = $record->klscore - 100; // Subtract 100 from the KL score.
-                    }
-                } else if ($record->klscore < 0) {
-                    // If it instead went below 0, then:
-                    if ($record->klcategory == 'wu') {
-                        $new_klcategory = 'mu'; // Downgrade the category to one level below it.
-                        $record->klscore = $record->klscore + 100; // Add 100 to the KL score.
-                    } else if ($record->klcategory == 'mu') {
-                        $new_klcategory = 'nu'; // Downgrade the category to one level below it.
-                        $record->klscore = $record->klscore + 100; // Add 100 to the KL score.
-                    } else { // if ($record->klcategory == 'nu')
-                        $record->klscore = 0; // Set KL score to 0 (min) as the KL category is already the worst one.
-                    }
-                }
+        //         // The range of the KL score is 0 to 100, if it went above 100 or below 0, then:
+        //         // we need to adjust the KL category and KL score.
+        //         if ($record->klscore > 100) {
+        //             // If it went above 100, then:
+        //             if ($record->klcategory == 'wu') {
+        //                 $record->klscore = 100; // Set it at 100 (max) if the KL category is already the best.
+        //             } else if ($record->klcategory == 'mu') {
+        //                 $new_klcategory = 'wu'; // Upgrade the category to one level above it.
+        //                 $record->klscore = $record->klscore - 100; // Subtract 100 from the KL score.
+        //             } else { // if ($record->klcategory == 'nu')
+        //                 $new_klcategory = 'mu'; // Upgrade the category to one level above it.
+        //                 $record->klscore = $record->klscore - 100; // Subtract 100 from the KL score.
+        //             }
+        //         } else if ($record->klscore < 0) {
+        //             // If it instead went below 0, then:
+        //             if ($record->klcategory == 'wu') {
+        //                 $new_klcategory = 'mu'; // Downgrade the category to one level below it.
+        //                 $record->klscore = $record->klscore + 100; // Add 100 to the KL score.
+        //             } else if ($record->klcategory == 'mu') {
+        //                 $new_klcategory = 'nu'; // Downgrade the category to one level below it.
+        //                 $record->klscore = $record->klscore + 100; // Add 100 to the KL score.
+        //             } else { // if ($record->klcategory == 'nu')
+        //                 $record->klscore = 0; // Set KL score to 0 (min) as the KL category is already the worst one.
+        //             }
+        //         }
 
-                // The second question is always the feedback form, asking the student how easy or hard the recommended question is.
-                // Therefore, we need to "forcefully" update the KL category if necessary.
-                // BUT, if the new KL category (depending from the first question) is already different from the previous KL category, then:
-                // ignore the feedback form to avoid multiple upgrade/downgrade (the concern here is that the jump is too big).
-                if ($new_klcategory != $record->klcategory) {
-                    // Ignore feedback
-                    $record->klcategory = $new_klcategory;
-                } else {
-                    // Acknowledge feedback
-                    $feedback_fraction = $this->attempt->sumfractions[1]; // Get the fraction (answer) of the feedback form
+        //         // The second question is always the feedback form, asking the student how easy or hard the recommended question is.
+        //         // Therefore, we need to "forcefully" update the KL category if necessary.
+        //         // BUT, if the new KL category (depending from the first question) is already different from the previous KL category, then:
+        //         // ignore the feedback form to avoid multiple upgrade/downgrade (the concern here is that the jump is too big).
+        //         if ($new_klcategory != $record->klcategory) {
+        //             // Ignore feedback
+        //             $record->klcategory = $new_klcategory;
+        //         } else {
+        //             // Acknowledge feedback
+        //             $feedback_fraction = $this->attempt->sumfractions[1]; // Get the fraction (answer) of the feedback form
                     
-                    // error_log('Feedback fraction: ' . $feedback_fraction);
-                    if ($feedback_fraction == 0.5) {
-                        // The student thinks the previous question is too hard.
-                        if ($record->klcategory == 'wu') {
-                            $record->klcategory = 'mu'; // Downgrade the category to one level below it.
-                        } else if ($record->klcategory == 'mu') {
-                            $record->klcategory = 'nu'; // Downgrade the category to one level below it.
-                        }
-                    } else if (($feedback_fraction == 1.0) && ($first_fraction == 1.0)) {
-                        // The student thinks the previous question is too easy.
-                        // Note: The student also needs to get the first question right, if not then skip.
-                        if ($record->klcategory == 'mu') {
-                            $record->klcategory = 'wu'; // Upgrade the category to one level above it.
-                        } else if ($record->klcategory == 'nu') {
-                            $record->klcategory = 'mu'; // Upgrade the category to one level above it.
-                        }
-                    }
-                }
+        //             // error_log('Feedback fraction: ' . $feedback_fraction);
+        //             if ($feedback_fraction == 0.5) {
+        //                 // The student thinks the previous question is too hard.
+        //                 if ($record->klcategory == 'wu') {
+        //                     $record->klcategory = 'mu'; // Downgrade the category to one level below it.
+        //                 } else if ($record->klcategory == 'mu') {
+        //                     $record->klcategory = 'nu'; // Downgrade the category to one level below it.
+        //                 }
+        //             } else if (($feedback_fraction == 1.0) && ($first_fraction == 1.0)) {
+        //                 // The student thinks the previous question is too easy.
+        //                 // Note: The student also needs to get the first question right, if not then skip.
+        //                 if ($record->klcategory == 'mu') {
+        //                     $record->klcategory = 'wu'; // Upgrade the category to one level above it.
+        //                 } else if ($record->klcategory == 'nu') {
+        //                     $record->klcategory = 'mu'; // Upgrade the category to one level above it.
+        //                 }
+        //             }
+        //         }
 
-                $DB->update_record('rs_student_model', $record);
-            }
-        }
+        //         $DB->update_record('rs_student_model', $record);
+        //     }
+        // }
 
-        // error_log("Next Attempt");
+        error_log("Next Attempt");
         
         // Check if manual grading is required or if the user has the capability to receive graded notifications.
         if (!$this->requires_manual_grading() ||
