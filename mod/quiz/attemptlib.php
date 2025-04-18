@@ -2248,15 +2248,15 @@ class quiz_attempt {
                 $tagid = $taginstance->tagid;   // Get the tag id.
 
                 // Save the tag id, name, and fraction in an array with the questionid as key.
+                // Plus, add a flag to indicate if the category has been altered.
                 $arr_of_rsquestions[$questionid] = [
                     'tagid' => $tagid,
                     'tag_name' => $tag_name,
                     'fraction' => $fraction,
+                    'is_categoryaltered' => false,
                 ];
             }
         }
-
-        error_log('RS questions: ' . json_encode($arr_of_rsquestions)); // Log the RS questions for debugging.
 
         // Do Student Model (KL) manipulation only if there is RS questions in this attempt, if not then skip
         if (count($arr_of_rsquestions) > 0) {
@@ -2350,45 +2350,116 @@ class quiz_attempt {
                         return [
                             'tagid' => $rsquestion['tagid'],
                             'fraction' => $rsquestion['fraction'],
+                            'is_categoryaltered' => $rsquestion['is_categoryaltered'],
                         ];
                     }, $filtered_rsquestions);
 
                     // Loop through each tag id and update the KL record for the student.
                     foreach ($arr_of_kc as $kc) {
-                        // Template for updating the KL record:
-                        // $DB->set_field('rs_student_model', 'klcategory', 'wu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
+                        // Get the current KL record for the current tag id that will be updated.
                         $current_klrecord = $DB->get_record('rs_student_model', ['userid' => $sm_userid, 'tagid' => $kc['tagid']], 'klcategory, klscore');
 
                         // [To edit:] Pedagogical Logic
-                        // Here, rsquestion['fraction'] is the answer of the feedback form, where 1.0 is too easy and 0.5 is too hard.
-                        // $kc['fraction'] is the fraction of the programming question that the student has answered.
-                        if (($rsquestion['fraction'] == 0.5) && ($kc['fraction'] <= 0.5)) {
-                            // The student thinks that the question is too hard
-                            // Their feedback is valid only if:
-                            // they have answered the question with only two or less correct test case.
-                            if ($current_klrecord->klcategory == 'wu') {
-                                // Downgrade the KL category from 'well understood' to 'moderately understood'.
-                                $DB->set_field('rs_student_model', 'klcategory', 'mu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
-                            } elseif ($current_klrecord->klcategory == 'mu') {
-                                // Downgrade the KL category from 'moderately understood' to 'not understood'.
-                                $DB->set_field('rs_student_model', 'klcategory', 'nu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
+                        // If the KL category has been upgraded or downgraded naturally (else), don't upgrade or downgrade it again.
+                        // This is to prevent the KL category from being double upgraded or downgraded.
+                        if (!$kc['is_categoryaltered']) {
+                            // Here, rsquestion['fraction'] is the answer of the feedback form, where 1.0 is too easy and 0.5 is too hard.
+                            // $kc['fraction'] is the fraction of the programming question that the student has answered.
+                            if (($rsquestion['fraction'] == 0.5) && ($kc['fraction'] <= 0.5)) {
+                                // The student thinks that the question is too hard
+                                // Their feedback is valid only if:
+                                // they have answered the question with only two or less correct test case.
+                                if ($current_klrecord->klcategory == 'wu') {
+                                    // Downgrade the KL category from 'well understood' to 'moderately understood'.
+                                    $DB->set_field('rs_student_model', 'klcategory', 'mu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
+                                } elseif ($current_klrecord->klcategory == 'mu') {
+                                    // Downgrade the KL category from 'moderately understood' to 'not understood'.
+                                    $DB->set_field('rs_student_model', 'klcategory', 'nu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
+                                }
+                                // Not possible to upgrade the KL category if it is already 'not understood'.
+                            } elseif (($rsquestion['fraction'] == 1.0) && ($kc['fraction'] == 1.0)) {
+                                // The student thinks that the question is too easy
+                                // Their feedback is valid only if they have answered the question correctly.
+                                if ($current_klrecord->klcategory == 'nu') {
+                                    // Upgrade the KL category from 'not understood' to 'moderately understood'.
+                                    $DB->set_field('rs_student_model', 'klcategory', 'mu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
+                                } elseif ($current_klrecord->klcategory == 'mu') {
+                                    // Upgrade the KL category from 'moderately understood' to 'well understood'.
+                                    $DB->set_field('rs_student_model', 'klcategory', 'wu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
+                                }
+                                // Not possible to upgrade the KL category if it is already 'well understood'.
                             }
-                            // Not possible to upgrade the KL category if it is already 'not understood'.
-                        } elseif (($rsquestion['fraction'] == 1.0) && ($kc['fraction'] == 1.0)) {
-                            // The student thinks that the question is too easy
-                            // Their feedback is valid only if they have answered the question correctly.
-                            if ($current_klrecord->klcategory == 'nu') {
-                                // Upgrade the KL category from 'not understood' to 'moderately understood'.
-                                $DB->set_field('rs_student_model', 'klcategory', 'mu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
-                            } elseif ($current_klrecord->klcategory == 'mu') {
-                                // Upgrade the KL category from 'moderately understood' to 'well understood'.
-                                $DB->set_field('rs_student_model', 'klcategory', 'wu', ['userid' => $sm_userid, 'tagid' => $kc['tagid']]);
-                            }
-                            // Not possible to upgrade the KL category if it is already 'well understood'.
                         }
                     }
                 } else {
                     // This means the current question is an RS programming question.
+                    $current_klrecord = $DB->get_record('rs_student_model', ['userid' => $sm_userid, 'tagid' => $rsquestion['tagid']], 'klcategory, klscore');
+
+                    // [To edit:] Pedagogical Logic
+                    // Update the KL score based on the score that he/she got for the question.
+                    // Current system:
+                    // Every question have 4 test cases, each test case will have 0.25 mark, klscore will be updated as follows:
+                    if ($rsquestion['fraction'] == 0) {
+                        // None of the test cases passed (-25).
+                        $current_klrecord->klscore = $current_klrecord->klscore - 25;
+                    } else if ($rsquestion['fraction'] == 0.25) {
+                        // Only one test case passed (-12).
+                        $current_klrecord->klscore = $current_klrecord->klscore - 12;
+                    } else if ($rsquestion['fraction'] == 0.75) {
+                        // Two test cases passed (+12).
+                        $current_klrecord->klscore = $current_klrecord->klscore + 12;
+                    } else if ($rsquestion['fraction'] == 1.0) {
+                        // All test cases passed (+25).
+                        $current_klrecord->klscore = $current_klrecord->klscore + 25;
+                    }
+
+                    // The range of KL score is between 0 and 100, if it went above 100 or below 0, then:
+                    // we need to adjust the KL category and KL score.
+                    if ($current_klrecord->klscore > 100) {
+                        // If KL score is greater than 100, then:
+                        $rsquestion['is_categoryaltered'] = true; // Set the flag to true.
+                        if ($current_klrecord->klcategory == 'nu') {
+                            // Upgrade the KL category from 'not understood' to 'moderately understood'.
+                            $current_klrecord->klcategory = 'mu';
+                            $current_klrecord->klscore = $current_klrecord->klscore - 100;
+                        } elseif ($current_klrecord->klcategory == 'mu') {
+                            // Upgrade the KL category from 'moderately understood' to 'well understood'.
+                            $current_klrecord->klcategory = 'wu';
+                            $current_klrecord->klscore = $current_klrecord->klscore - 100;
+                        } else {
+                            // KL category is already at max, 'well understood', so we need to set KL score to 100.
+                            $current_klrecord->klscore = 100;
+                        }
+                    } else if ($current_klrecord->klscore < 0) {
+                        // If KL score is less than 0, then:
+                        $rsquestion['is_categoryaltered'] = true; // Set the flag to true.
+                        if ($current_klrecord->klcategory == 'wu') {
+                            // Downgrade the KL category from 'well understood' to 'moderately understood'.
+                            $current_klrecord->klcategory = 'mu';
+                            $current_klrecord->klscore = $current_klrecord->klscore + 100;
+                        } elseif ($current_klrecord->klcategory == 'mu') {
+                            // Downgrade the KL category from 'moderately understood' to 'not understood'.
+                            $current_klrecord->klcategory = 'nu';
+                            $current_klrecord->klscore = $current_klrecord->klscore + 100;
+                        } else {
+                            // KL category is already at min, 'not understood', so we need to set KL score to 0.
+                            $current_klrecord->klscore = 0;
+                        }
+                    }
+
+                    error_log('Question id: ' . $questionid);
+                    error_log('Tag id: ' . $rsquestion['tagid']);
+                    error_log('KL category: ' . $current_klrecord->klcategory);
+                    error_log('KL score: ' . $current_klrecord->klscore);
+                    error_log('Fraction: ' . $rsquestion['fraction']);
+                    error_log('Is category altered: ' . $rsquestion['is_categoryaltered']);
+
+                    // Finally, update the KL record for the current tag id.
+                    $DB->set_field('rs_student_model', 'klscore', $current_klrecord->klscore, ['userid' => $sm_userid, 'tagid' => $rsquestion['tagid']]);
+                    if ($rsquestion['is_categoryaltered'] === true) {
+                        // If the KL category has been altered, then update the KL category as well.
+                        $DB->set_field('rs_student_model', 'klcategory', $current_klrecord->klcategory, ['userid' => $sm_userid, 'tagid' => $rsquestion['tagid']]);
+                    }
                 }
             }
         }
