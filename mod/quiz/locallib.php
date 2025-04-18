@@ -227,6 +227,8 @@ function quiz_start_new_attempt($quizobj, $quba, $attempt, $attemptnumber, $time
             }
         }
 
+        // throw new moodle_exception('Missing Student Model! This is caused by admin error. Make sure that background form is filled first. Or if you have created a new KC tags during production, delete previous attempts and instruct your student to fill them again.'); // Test exception for debugging.
+
         // Create a random question loader to handle random question selection.
         $randomloader = new \core_question\local\bank\random_question_loader($qubaids, $usedquestionids);
 
@@ -266,6 +268,10 @@ function quiz_start_new_attempt($quizobj, $quba, $attempt, $attemptnumber, $time
                 throw new moodle_exception('notenoughrandomquestions', 'quiz',
                                            $quizobj->view_url(), $questiondata);
             }
+
+            // [WIP Later, outside of KISS] Check if the picked question's KC is initialized in the student model.
+            // This is to avoid the situation where the question's KC tag is not initialized in the student model.
+            // This can happen when new tags are added during production.
 
             // Load the selected random question and add it to the questions array.
             $questions[$slot] = question_bank::load_question($questionid,
