@@ -353,20 +353,11 @@ class random_question_loader {
         // Generate a unique key for the cache based on the category, subcategories, and tags.
         $categorykey = $this->get_category_key($categoryid, $includesubcategories, $tagids);
 
-        // Retrieve the cached values for the given category key.
-        $cachedvalues = $this->availablequestionscache[$categorykey];
-
-        // Initialize an empty array to store the question IDs.
-        $questionids = [];
-
-        // Iterate over all usage count groups in the cache.
-        foreach ($cachedvalues as $usecount => $ids) {
-            // Merge the question IDs from the current group into the result array.
-            $questionids = array_merge($questionids, array_keys($ids));
-        }
+        // Retrieve the cached values (that contains question ids) for the given category key.
+        $cachedvalues = $this->availablequestionscache[$categorykey] ?? [];
 
         // Return the list of question IDs.
-        return $questionids;
+        return $cachedvalues;
     }
 
     /**
