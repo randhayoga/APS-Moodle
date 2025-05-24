@@ -101,6 +101,9 @@ class random_question_loader {
      * @return int|null the id of the question picked, or null if there aren't any.
      */
     public function get_next_question_id($categoryid, $includesubcategories, $tagids = []): ?int {
+        global $DB; // Access the global database object for executing queries.
+        global $USER; // Access the global user object to get the current user's ID.
+
         // [Modify] Ensure that questions for the given category, subcategories, and tags are loaded into the cache.
         $this->ensure_questions_for_category_loaded($categoryid, $includesubcategories, $tagids); // Modify this for the RS
 
@@ -124,8 +127,63 @@ class random_question_loader {
         // // Get the ID of the first question in the group with the fewest uses.
         // $questionid = key($this->availablequestionscache[$categorykey][$lowestcount]);
 
-        // [Modify] Get the question ID of the pointer
-        $questionid = current($this->availablequestionscache[$categorykey]);
+        // [Modify] for the RS
+        // Preparing the user student model data to be sent to the RS API
+
+        // Get the current user ID.
+        $userid = $USER->id; // Get the current user's ID.
+
+        // Get the student model for the current user.
+        $student_model = $DB->get_records('rs_student_model', ['userid' => $userid], '', 'tagid, klcategory, klscore'); 
+
+        // Get every KC ids that the current user has.
+        $tagids = array_unique(array_map(function($r) {
+            return $r->tagid;
+        }, $student_model));
+
+        // Get the name for those KC ids 
+        list($in_sql, $in_params) = $DB->get_in_or_equal($tagids);
+        $tag_records = $DB->get_records_select('tag', "id $in_sql", $in_params, '', 'id, name');
+
+        // Replace the tagid with the name of the tag (matching it with the RS API model dataset)
+        foreach ($student_model as $key => $record) {
+            if (isset($tag_records[$record->tagid])) {
+                $student_model[$key]->tagid = $tag_records[$record->tagid]->name;
+            }
+        }
+
+        // Recommender System API
+        // $url = 'http://127.0.0.1:5000/cosine_similarity';
+        // $options = array(
+        //     'http' => array(
+        //         'header'  => "Content-type: application/json\r\n",
+        //         'method'  => 'POST',
+        //         'content' => json_encode($student_model),
+        //     )
+        // );
+        // $context  = stream_context_create($options);
+        // $result = file_get_contents($url, false, $context);
+        // if ($result === FALSE) {
+        //     echo "Error calling API.";
+        // } else {
+        //     $response = json_decode($result, true);
+        // }
+
+        $ch = curl_init("http://localhost:5000/recommend");
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($student_model));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+        $response = curl_exec($ch);
+        curl_close($ch);
+
+        // Decode the JSON response from the API.
+        $response = json_decode($response, true);
+        // Get the recommended question ID from the API response.
+        $questionid = $response['question_id'];
+        error_log("Recommended question ID: " . $questionid); // Debugging log for recommended question ID.
+
+        // [Legacy] Get the question ID of the pointer
+        // $questionid = current($this->availablequestionscache[$categorykey]); 
 
         // Mark the selected question as "used" to ensure it is not selected again in the same session.
         $this->use_question($questionid, $categorykey);

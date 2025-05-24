@@ -2290,28 +2290,28 @@ class quiz_attempt {
                         // set a pair of appropriate category and score as intial score that this user have for every KC.
                         if ($rsquestion['fraction'] == 1.0) {
                             // For index score of A
-                            $sm_klcategory = 'wu';
-                            $sm_klscore = 0;
+                            $sm_klcategory = 'mu';
+                            $sm_klscore = 0.5;
                         } else if ($rsquestion['fraction'] == 0.8) {
                             // For index score of AB
                             $sm_klcategory = 'mu';
-                            $sm_klscore = 50;
+                            $sm_klscore = 0;
                         } else if ($rsquestion['fraction'] == 0.7) {
                             // For index score of B
-                            $sm_klcategory = 'mu';
-                            $sm_klscore = 0;
+                            $sm_klcategory = 'nu';
+                            $sm_klscore = 1;
                         } else if ($rsquestion['fraction'] == 0.6) {
                             // For index score of BC
                             $sm_klcategory = 'nu';
-                            $sm_klscore = 75;
+                            $sm_klscore = 0.75;
                         } else if ($rsquestion['fraction'] == 0.5) {
                             // For index score of C
                             $sm_klcategory = 'nu';
-                            $sm_klscore = 50;
+                            $sm_klscore = 0.5;
                         } else if ($rsquestion['fraction'] == 0.4) {
                             // For index score of D
                             $sm_klcategory = 'nu';
-                            $sm_klscore = 25;
+                            $sm_klscore = 0.25;
                         } else {
                             // For index score of E
                             $sm_klcategory = 'nu';
@@ -2326,6 +2326,15 @@ class quiz_attempt {
                                 'klcategory' => $sm_klcategory,
                                 'klscore' => $sm_klscore,
                             );
+
+                            // Temporary solution to skip the rs_array_of_struct tag id of (43).
+                            // [Pedagogical Logic]
+                            if ($record->tagid == 43) {
+                                if (($record->klcategory != 'mu') || ($record->klscore != 0.5)) {
+                                    $record->klscore = 0;
+                                }
+                                $record->klcategory = 'nu';
+                            }
 
                             // Insert the record into the rs_student_model table.
                             $DB->insert_record('rs_student_model', $record);
@@ -2400,35 +2409,35 @@ class quiz_attempt {
                     // Current system:
                     // Every question have 4 test cases, each test case will have 0.25 mark, klscore will be updated as follows:
                     if ($rsquestion['fraction'] == 0) {
-                        // None of the test cases passed (-25).
-                        $current_klrecord->klscore = $current_klrecord->klscore - 25;
+                        // None of the test cases passed (-0.5).
+                        $current_klrecord->klscore = $current_klrecord->klscore - 0.5;
                     } else if ($rsquestion['fraction'] == 0.25) {
-                        // Only one test case passed (-12).
-                        $current_klrecord->klscore = $current_klrecord->klscore - 12;
+                        // Only one test case passed (-0.25).
+                        $current_klrecord->klscore = $current_klrecord->klscore - 0.25;
                     } else if ($rsquestion['fraction'] == 0.75) {
-                        // Two test cases passed (+12).
-                        $current_klrecord->klscore = $current_klrecord->klscore + 12;
+                        // Two test cases passed (+0.5).
+                        $current_klrecord->klscore = $current_klrecord->klscore + 0.5;
                     } else if ($rsquestion['fraction'] == 1.0) {
-                        // All test cases passed (+25).
-                        $current_klrecord->klscore = $current_klrecord->klscore + 25;
+                        // All test cases passed (+1.0).
+                        $current_klrecord->klscore = $current_klrecord->klscore + 1.0;
                     }
 
-                    // The range of KL score is between 0 and 100, if it went above 100 or below 0, then:
+                    // The range of KL score is between 0 and 1, if it went above 100 or below 0, then:
                     // we need to adjust the KL category and KL score.
-                    if ($current_klrecord->klscore > 100) {
-                        // If KL score is greater than 100, then:
+                    if ($current_klrecord->klscore > 1.0) {
+                        // If KL score is greater than 1, then:
                         $rsquestion['is_categoryaltered'] = true; // Set the flag to true.
                         if ($current_klrecord->klcategory == 'nu') {
                             // Upgrade the KL category from 'not understood' to 'moderately understood'.
                             $current_klrecord->klcategory = 'mu';
-                            $current_klrecord->klscore = $current_klrecord->klscore - 100;
+                            $current_klrecord->klscore = $current_klrecord->klscore - 1.0;
                         } elseif ($current_klrecord->klcategory == 'mu') {
                             // Upgrade the KL category from 'moderately understood' to 'well understood'.
                             $current_klrecord->klcategory = 'wu';
-                            $current_klrecord->klscore = $current_klrecord->klscore - 100;
+                            $current_klrecord->klscore = $current_klrecord->klscore - 1.0;
                         } else {
                             // KL category is already at max, 'well understood', so we need to set KL score to 100.
-                            $current_klrecord->klscore = 100;
+                            $current_klrecord->klscore = 1.0;
                         }
                     } else if ($current_klrecord->klscore < 0) {
                         // If KL score is less than 0, then:
@@ -2436,11 +2445,11 @@ class quiz_attempt {
                         if ($current_klrecord->klcategory == 'wu') {
                             // Downgrade the KL category from 'well understood' to 'moderately understood'.
                             $current_klrecord->klcategory = 'mu';
-                            $current_klrecord->klscore = $current_klrecord->klscore + 100;
+                            $current_klrecord->klscore = $current_klrecord->klscore + 1.0;
                         } elseif ($current_klrecord->klcategory == 'mu') {
                             // Downgrade the KL category from 'moderately understood' to 'not understood'.
                             $current_klrecord->klcategory = 'nu';
-                            $current_klrecord->klscore = $current_klrecord->klscore + 100;
+                            $current_klrecord->klscore = $current_klrecord->klscore + 1.0;
                         } else {
                             // KL category is already at min, 'not understood', so we need to set KL score to 0.
                             $current_klrecord->klscore = 0;
