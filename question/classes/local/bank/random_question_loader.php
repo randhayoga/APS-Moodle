@@ -169,7 +169,8 @@ class random_question_loader {
         //     $response = json_decode($result, true);
         // }
 
-        $ch = curl_init("http://localhost:5000/recommend");
+        // $ch = curl_init("http://localhost:5000/recommend");
+        $ch = curl_init("http://18.143.108.206:5000/recommend"); // RS API URL
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($student_model));
         curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
@@ -178,6 +179,7 @@ class random_question_loader {
 
         // Decode the JSON response from the API.
         $response = json_decode($response, true);
+        error_log("API Response: " . print_r($response, true)); // Debugging log for API response.
         // Get the recommended question ID from the API response.
         $questionid = $response['question_id'];
         error_log("Recommended question ID: " . $questionid); // Debugging log for recommended question ID.

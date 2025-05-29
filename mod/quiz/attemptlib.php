@@ -2371,6 +2371,7 @@ class quiz_attempt {
                         // [To edit:] Pedagogical Logic
                         // If the KL category has been upgraded or downgraded naturally (else), don't upgrade or downgrade it again.
                         // This is to prevent the KL category from being double upgraded or downgraded.
+                        error_log("Is category altered: " . ($kc['is_categoryaltered'] ? 'true' : 'false'));
                         if (!$kc['is_categoryaltered']) {
                             // Here, rsquestion['fraction'] is the answer of the feedback form, where 1.0 is too easy and 0.5 is too hard.
                             // $kc['fraction'] is the fraction of the programming question that the student has answered.
